@@ -49,7 +49,6 @@ http://localhost:3000
   - express - Web server framework
   - cors - Cross-origin resource sharing
   - axios - HTTP client for fetching Instagram data
-  - cheerio - HTML parsing
 
 ## Important Notes
 

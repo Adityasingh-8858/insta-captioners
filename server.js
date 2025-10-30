@@ -32,14 +32,15 @@ app.post('/api/get-caption', async (req, res) => {
         
         // Fetch Instagram post data
         // Note: Instagram's official API requires authentication
-        // For a production app, you'd need to use Instagram Graph API
-        // This is a simplified approach using public endpoints
+        // For a production app, you'd need to use Instagram Graph API with proper authentication
+        // This is a simplified approach using public endpoints which may become unreliable
+        // The __a=1 parameter is deprecated but still works for some use cases
         
         const instagramUrl = `https://www.instagram.com/p/${postCode}/?__a=1&__d=dis`;
         
         const response = await axios.get(instagramUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
             },
@@ -63,10 +64,10 @@ app.post('/api/get-caption', async (req, res) => {
         }
 
         if (!caption) {
-            // Try alternative method - scrape the page
+            // Try alternative method - scrape the page HTML
             const htmlResponse = await axios.get(`https://www.instagram.com/p/${postCode}/`, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 },
                 timeout: 10000
             });
@@ -79,7 +80,8 @@ app.post('/api/get-caption', async (req, res) => {
             
             if (metaMatch && metaMatch[1]) {
                 caption = metaMatch[1];
-                // Clean up the caption (remove "likes, X comments" etc.)
+                // Clean up the caption (remove "likes, X comments" prefix if present)
+                // Note: This pattern may need adjustment based on Instagram's format changes
                 caption = caption.replace(/^\d+\s+(Likes?,\s+)?\d+\s+Comments?\s+-\s+/i, '');
             }
         }
