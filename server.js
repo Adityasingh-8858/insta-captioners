@@ -7,6 +7,9 @@ const rateLimit = require('express-rate-limit');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust proxy - fixes ERR_ERL_UNEXPECTED_X_FORWARDED_FOR when behind proxy/load balancer
+app.set('trust proxy', 1);
+
 // Rate limiting to prevent abuse
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -48,60 +51,63 @@ app.post('/api/get-caption', async (req, res) => {
             return res.status(400).json({ error: 'Invalid post code format' });
         }
         
-        // Fetch Instagram post data
-        // Note: Instagram's official API requires authentication
-        // For a production app, you'd need to use Instagram Graph API with proper authentication
-        // This is a simplified approach using public endpoints which may become unreliable
-        // The __a=1 parameter is deprecated but still works for some use cases
+        // Fetch Instagram post data by scraping HTML
+        // Note: Instagram's __a=1 JSON endpoints are deprecated and return 404
+        // We now scrape the public HTML page and extract caption from meta tags
         
-        // Construct URL with validated postCode - no user input directly in URL
-        const instagramUrl = `https://www.instagram.com/p/${encodeURIComponent(postCode)}/?__a=1&__d=dis`;
+        // Construct URL with validated postCode
+        const instagramUrl = `https://www.instagram.com/p/${encodeURIComponent(postCode)}/`;
         
         const response = await axios.get(instagramUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
             },
-            timeout: 10000
+            timeout: 15000,
+            validateStatus: (status) => status === 200
         });
 
-        // Try to extract caption from response
+        const html = response.data;
         let caption = '';
         
-        // Instagram's response structure can vary
-        if (response.data && response.data.graphql && response.data.graphql.shortcode_media) {
-            const media = response.data.graphql.shortcode_media;
-            if (media.edge_media_to_caption && media.edge_media_to_caption.edges.length > 0) {
-                caption = media.edge_media_to_caption.edges[0].node.text;
-            }
-        } else if (response.data && response.data.items && response.data.items.length > 0) {
-            const item = response.data.items[0];
-            if (item.caption && item.caption.text) {
-                caption = item.caption.text;
-            }
+        // Try to extract from og:description meta tag
+        const ogDescRegex = /<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i;
+        const ogMatch = html.match(ogDescRegex);
+        
+        if (ogMatch && ogMatch[1]) {
+            caption = ogMatch[1];
+            // Decode HTML entities
+            caption = caption
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#039;/g, "'");
+            
+            // Clean up the caption (remove "likes, X comments" prefix if present)
+            caption = caption.replace(/^\d+\s+(Likes?,\s+)?\d+\s+Comments?\s+-\s+/i, '');
         }
-
+        
+        // Fallback: try name="description" meta tag
         if (!caption) {
-            // Try alternative method - scrape the page HTML
-            const htmlResponse = await axios.get(`https://www.instagram.com/p/${encodeURIComponent(postCode)}/`, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                },
-                timeout: 10000
-            });
-
-            const html = htmlResponse.data;
+            const nameDescRegex = /<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i;
+            const nameMatch = html.match(nameDescRegex);
             
-            // Try to extract from meta tags
-            const metaRegex = /<meta property="og:description" content="([^"]*)"/;
-            const metaMatch = html.match(metaRegex);
-            
-            if (metaMatch && metaMatch[1]) {
-                caption = metaMatch[1];
-                // Clean up the caption (remove "likes, X comments" prefix if present)
-                // Note: This pattern may need adjustment based on Instagram's format changes
-                caption = caption.replace(/^\d+\s+(Likes?,\s+)?\d+\s+Comments?\s+-\s+/i, '');
+            if (nameMatch && nameMatch[1]) {
+                caption = nameMatch[1]
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&#039;/g, "'");
             }
         }
 
