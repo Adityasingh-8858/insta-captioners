@@ -2,13 +2,26 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Rate limiting to prevent abuse
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 30, // Limit each IP to 30 requests per windowMs
+    message: { error: 'Too many requests, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Apply rate limiting to API routes
+app.use('/api/', apiLimiter);
 
 // Instagram API endpoint to get reel data
 app.post('/api/get-caption', async (req, res) => {
@@ -19,7 +32,7 @@ app.post('/api/get-caption', async (req, res) => {
             return res.status(400).json({ error: 'URL is required' });
         }
 
-        // Validate Instagram URL
+        // Validate Instagram URL - ensure it's actually from Instagram domain
         const instagramUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(reel|reels|p)\/([A-Za-z0-9_-]+)/;
         const match = url.match(instagramUrlPattern);
         
@@ -30,13 +43,19 @@ app.post('/api/get-caption', async (req, res) => {
         // Extract post code from URL
         const postCode = match[3];
         
+        // Additional validation: ensure postCode is alphanumeric and reasonable length
+        if (!/^[A-Za-z0-9_-]{6,20}$/.test(postCode)) {
+            return res.status(400).json({ error: 'Invalid post code format' });
+        }
+        
         // Fetch Instagram post data
         // Note: Instagram's official API requires authentication
         // For a production app, you'd need to use Instagram Graph API with proper authentication
         // This is a simplified approach using public endpoints which may become unreliable
         // The __a=1 parameter is deprecated but still works for some use cases
         
-        const instagramUrl = `https://www.instagram.com/p/${postCode}/?__a=1&__d=dis`;
+        // Construct URL with validated postCode - no user input directly in URL
+        const instagramUrl = `https://www.instagram.com/p/${encodeURIComponent(postCode)}/?__a=1&__d=dis`;
         
         const response = await axios.get(instagramUrl, {
             headers: {
@@ -65,7 +84,7 @@ app.post('/api/get-caption', async (req, res) => {
 
         if (!caption) {
             // Try alternative method - scrape the page HTML
-            const htmlResponse = await axios.get(`https://www.instagram.com/p/${postCode}/`, {
+            const htmlResponse = await axios.get(`https://www.instagram.com/p/${encodeURIComponent(postCode)}/`, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 },
